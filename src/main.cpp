@@ -9,6 +9,7 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
+// This must be exactly equal to the struct defined in fractal.ispc
 struct Complex {
     float r, i;
 };
@@ -32,12 +33,13 @@ RGB hsv_to_rgb(float h, float s, float v) {
     int i = (int)(h * 6.0f);
     float f = (h * 6.0f) - i;
 
-    // v = maximum brightness
-    // p = inimum brightness
+    // v = intensity of the maximum brightness color
+    // p = intensity of minimum brightness color
     float p = v * (1.0f - s);
 
-    // q, t = intermediate values
-    // fading up from p to v or fading down from v to p with f
+    // q, t = intensity of intermediate brightness color
+    // q is fading down from v to p with f
+    // t is faing up from p to v with f
     float q = v * (1.0f - s * f);
     float t = v * (1.0f - s * (1.0f - f));
 
@@ -51,7 +53,7 @@ RGB hsv_to_rgb(float h, float s, float v) {
 
     // Decide which value to assing to R, G, B based on the secotor
     // In each sector, a color component is at its max (v), one at its min (p)
-    // and the third is intermediate (q or t)
+    // and the third is fading down (q) or up (t)
     switch (i) {
         // Red to yellow, hue: 0 - 60, red is max, green rises, blue is min
         case 0:
@@ -91,28 +93,33 @@ int main(int argc, char* argv[]) {
     if (argc > 2) width = std::atoi(argv[2]);
     if (argc > 3) height = std::atoi(argv[3]);
     if (argc > 4) max_iterations = std::atoi(argv[4]);
+    if (argc > 5) tolerance = std::stod(argv[5]);
+    if (argc > 6) gamma = std::stof(argv[6]);
 
     std::cout << "Generating Newton fractal for z^" << n << "-1 = 0\n";
     std::cout << "Image size: " << width << "x" << height << "\n";
     std::cout << "Max iterations: " << max_iterations << "\n";
+    std::cout << "Newton method tolerance: " << tolerance << "\n";
+    std::cout << "Gamma (higher value decays colors based on iterations more "
+                 "abruptly): "
+              << gamma << "\n";
 
-    // Complex plane view
+    // Complex plane
     const float x_min = -5.0f, x_max = 5.0f, y_min = -5.0f, y_max = 5.0f;
     const float tolerance_sq = (float)(tolerance * tolerance);
 
-    // 2. Pre-compute Roots
+    // 2. Compute roots
     std::vector<Complex> roots(n);
     for (int k = 0; k < n; ++k) {
         double angle = 2.0 * M_PI * k / n;
         roots[k] = {(float)std::cos(angle), (float)std::sin(angle)};
     }
 
-    // 3. Allocate Memory
+    // 3. Allocate memory
     std::vector<int> output_root(width * height);
     std::vector<int> output_iters(width * height);
-    std::vector<RGB> image_data(width * height);
 
-    // 4. Launch ISPC Kernel
+    // 4. Launch ISPC kernel
     std::cout << "Starting ISPC computation...\n";
     auto start = std::chrono::high_resolution_clock::now();
 
@@ -124,9 +131,10 @@ int main(int argc, char* argv[]) {
     auto end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> diff = end - start;
     std::cout << "ISPC computation finished in " << diff.count()
-              << " seconds.\n";
+              << " seconds\n";
 
     // 5. Post-processing (serial)
+    std::vector<RGB> image_data(width * height);
     for (int i = 0; i < width * height; ++i) {
         int root_index = output_root[i];
         int iters = output_iters[i];
@@ -136,13 +144,16 @@ int main(int argc, char* argv[]) {
             image_data[i] = {0, 0, 0};
         }
         else {
-            // Converged -> Color by root and iterations
-            // Hue: based on which root (0..n-1)
+            // Converged -> color by root and iterations
+            // Hue: based on which root
             float hue = (float)root_index / (float)n;
+
             // Saturation: constant
             float saturation = 0.9f;
-            // Value/Brightness: based on iteration count
-            // Fewer iterations = brighter. Matches the example image.
+
+            // Value: based on iteration count
+            // Fewer iterations = brighter
+            // Gamma controls how fast colors decay to black
             float value = 1.0f - (float)iters / (float)max_iterations;
             value = pow(value, gamma);
 
