@@ -1,6 +1,9 @@
 # Build directory
 build/
 
+# ISPC compiled headers
+fractal_ispc.h
+
 # Image files
 *.png
 
